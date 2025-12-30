@@ -6,7 +6,10 @@ import jwt
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import String
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.compiler import compiles
 
 from app.config import settings
 from app.db.session import get_db
@@ -15,6 +18,20 @@ from app.models.base import Base
 
 # Use SQLite for tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+
+# Register SQLite-compatible type compilers for PostgreSQL types
+# This allows the tests to use SQLite while the models use PostgreSQL types
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(type_, compiler, **kw):
+    """Compile JSONB as JSON for SQLite."""
+    return "JSON"
+
+
+@compiles(UUID, "sqlite")
+def compile_uuid_sqlite(type_, compiler, **kw):
+    """Compile UUID as VARCHAR(36) for SQLite."""
+    return "VARCHAR(36)"
 
 
 @pytest.fixture(scope="session")

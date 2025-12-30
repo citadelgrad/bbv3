@@ -4,25 +4,45 @@
 API_DIR := $(shell pwd)/mlb_fantasy_api
 JOBS_DIR := /Users/scott/projects/mlb_fantasy_jobs
 WEB_DIR := $(shell pwd)/mlb_fantasy_web
+WEB_PID_FILE := $(shell pwd)/.web.pid
 
-.PHONY: up down restart logs status ps api-logs jobs-logs db-migrate help web-dev web-build web-install
+.PHONY: up down restart logs status ps api-logs jobs-logs db-migrate help web-dev web-build web-install web-stop
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 up: ## Start all development services
 	@echo "Starting MLB Fantasy API..."
-	@cd $(API_DIR) && podman compose up -d
+	@cd $(API_DIR) && podman compose up -d --wait 2>&1 | grep -v "Executing external" || true
+	@sleep 2
 	@echo "Starting MLB Fantasy Jobs..."
-	@cd $(JOBS_DIR) && podman compose up -d
+	@cd $(JOBS_DIR) && podman compose up -d --wait 2>&1 | grep -v "Executing external" || true
+	@sleep 2
+	@echo "Starting MLB Fantasy Web..."
+	@if [ -f $(WEB_PID_FILE) ] && kill -0 $$(cat $(WEB_PID_FILE)) 2>/dev/null; then \
+		echo "  Web already running (PID: $$(cat $(WEB_PID_FILE)))"; \
+	else \
+		cd $(WEB_DIR) && nohup npm run dev > /tmp/web.log 2>&1 & echo $$! > $(WEB_PID_FILE); \
+		sleep 3; \
+		echo "  Web started (PID: $$(cat $(WEB_PID_FILE)))"; \
+	fi
 	@echo "\n✓ All services started"
 	@$(MAKE) status --no-print-directory
 
 down: ## Stop all development services
+	@echo "Stopping MLB Fantasy Web..."
+	@if [ -f $(WEB_PID_FILE) ]; then \
+		PID=$$(cat $(WEB_PID_FILE)); \
+		if kill -0 $$PID 2>/dev/null; then \
+			kill $$PID 2>/dev/null || true; \
+			echo "  Web stopped (PID: $$PID)"; \
+		fi; \
+		rm -f $(WEB_PID_FILE); \
+	fi
 	@echo "Stopping MLB Fantasy Jobs..."
-	@cd $(JOBS_DIR) && podman compose down
+	@cd $(JOBS_DIR) && podman compose down 2>&1 | grep -v "Executing external" || true
 	@echo "Stopping MLB Fantasy API..."
-	@cd $(API_DIR) && podman compose down
+	@cd $(API_DIR) && podman compose down 2>&1 | grep -v "Executing external" || true
 	@echo "\n✓ All services stopped"
 
 restart: down up ## Restart all services

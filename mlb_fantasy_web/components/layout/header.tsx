@@ -35,6 +35,12 @@ export function Header({ user }: HeaderProps) {
               Dashboard
             </Link>
             <Link
+              href="/scout"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              Scout
+            </Link>
+            <Link
               href="/profile"
               className="text-muted-foreground hover:text-foreground"
             >

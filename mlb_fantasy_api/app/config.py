@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     log_output: Literal["stdout", "file"] = "stdout"
     log_file_path: str = "/var/log/mlb-fantasy/api.log"
 
+    # Jobs Service
+    jobs_api_url: str = "http://localhost:8001"
+
     @property
     def is_development(self) -> bool:
         return self.app_env == "development"
