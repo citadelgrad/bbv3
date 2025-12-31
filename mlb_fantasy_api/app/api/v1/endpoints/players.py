@@ -2,9 +2,13 @@
 
 import uuid
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
+from app.core.logging import logger
 from app.db.session import get_db
 from app.schemas.player import (
     EntityResolutionRequest,
@@ -212,3 +216,143 @@ async def add_player_alias(
             detail=f"Player {player_id} not found",
         )
     return PlayerNameAliasResponse.model_validate(alias)
+
+
+# Admin endpoints for player registry management
+
+
+class SyncRequest(BaseModel):
+    """Request to sync players from external source."""
+
+    source: str = "mlb"
+    include_inactive: bool = False
+    sync_rosters: bool = True
+
+
+class SyncResponse(BaseModel):
+    """Response from sync job trigger."""
+
+    status: str
+    job_id: str | None = None
+    message: str
+
+
+class SyncStatusResponse(BaseModel):
+    """Response from sync job status check."""
+
+    job_id: str
+    status: str
+    result: dict | None = None
+    error: str | None = None
+
+
+@router.post(
+    "/sync",
+    response_model=SyncResponse,
+    tags=["admin"],
+    responses={
+        202: {"model": SyncResponse, "description": "Sync job queued"},
+        503: {"description": "Jobs service unavailable"},
+    },
+)
+async def trigger_player_sync(
+    request: SyncRequest | None = None,
+) -> SyncResponse:
+    """Trigger a player registry sync from MLB Stats API.
+
+    This queues a background job to sync all players from the MLB Stats API.
+    Use the returned job_id to check sync status.
+    """
+    request = request or SyncRequest()
+
+    logger.info(
+        "Player sync requested",
+        source=request.source,
+        include_inactive=request.include_inactive,
+        sync_rosters=request.sync_rosters,
+    )
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{settings.jobs_api_url}/api/v1/jobs",
+                json={
+                    "task_name": "processors.sync_player_data",
+                    "args": {
+                        "source": request.source,
+                        "include_inactive": request.include_inactive,
+                        "sync_rosters": request.sync_rosters,
+                    },
+                },
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            job_data = response.json()
+
+        job_id = job_data.get("id") or job_data.get("celery_task_id")
+        if not job_id:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to get job ID from Jobs service",
+            )
+
+        logger.info("Player sync job queued", job_id=job_id)
+
+        return SyncResponse(
+            status="pending",
+            job_id=job_id,
+            message=f"Sync job queued. Check status at /players/sync/{job_id}",
+        )
+
+    except httpx.HTTPStatusError as e:
+        logger.error("Jobs API error", status_code=e.response.status_code)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Jobs service error: {e.response.status_code}",
+        )
+    except httpx.RequestError as e:
+        logger.error("Jobs API connection error", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Jobs service unavailable",
+        )
+
+
+@router.get(
+    "/sync/{job_id}",
+    response_model=SyncStatusResponse,
+    tags=["admin"],
+)
+async def get_sync_status(job_id: str) -> SyncStatusResponse:
+    """Check the status of a player sync job."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{settings.jobs_api_url}/api/v1/jobs/{job_id}",
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            job_data = response.json()
+
+        return SyncStatusResponse(
+            job_id=job_id,
+            status=job_data.get("status", "unknown"),
+            result=job_data.get("result"),
+            error=job_data.get("error_message"),
+        )
+
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sync job not found",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Jobs service error: {e.response.status_code}",
+        )
+    except httpx.RequestError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Jobs service unavailable",
+        )
