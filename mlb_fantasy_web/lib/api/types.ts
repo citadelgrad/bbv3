@@ -74,11 +74,54 @@ export interface ResearchResponseComplete {
   report: ScoutingReport;
 }
 
-export type ResearchResponse = ResearchResponsePending | ResearchResponseComplete;
+export interface PlayerSummary {
+  id: string;
+  full_name: string;
+  current_team_abbrev: string | null;
+  primary_position: string | null;
+}
+
+export interface Player {
+  id: string;
+  full_name: string;
+  first_name: string;
+  last_name: string;
+  name_suffix: string | null;
+  name_normalized: string;
+  mlb_id: number | null;
+  fangraphs_id: string | null;
+  baseball_reference_id: string | null;
+  yahoo_fantasy_id: string | null;
+  espn_fantasy_id: string | null;
+  birth_date: string | null;
+  current_team: string | null;
+  current_team_abbrev: string | null;
+  primary_position: string | null;
+  bats: string | null;
+  throws: string | null;
+  status: string;
+  mlb_org: string | null;
+  minor_league_level: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ResearchResponseAmbiguous {
+  status: "ambiguous";
+  candidates: PlayerSummary[];
+  message: string;
+}
+
+export type ResearchResponse =
+  | ResearchResponsePending
+  | ResearchResponseComplete
+  | ResearchResponseAmbiguous;
 
 export interface JobStatusResponse {
-  job_id: string;
-  status: "pending" | "running" | "success" | "failed";
+  job_id?: string;
+  id?: string;
+  status: "pending" | "running" | "success" | "failed" | "failure";
   result?: {
     status: string;
     report_id: string;
@@ -94,4 +137,5 @@ export interface JobStatusResponse {
     expires_at: string;
   };
   error?: string;
+  error_message?: string;
 }

@@ -1,16 +1,28 @@
-import { apiClient } from "./client";
+import { apiClient, ApiError } from "./client";
 import type {
   JobStatusResponse,
   ResearchResponse,
+  ResearchResponseAmbiguous,
   ScoutingReport,
 } from "./types";
 
 export async function researchPlayer(
   playerName: string
 ): Promise<ResearchResponse> {
-  return apiClient.post<ResearchResponse>("/api/v1/scouting/research", {
-    player_name: playerName,
-  });
+  try {
+    return await apiClient.post<ResearchResponse>("/api/v1/scouting/research", {
+      player_name: playerName,
+    });
+  } catch (error) {
+    // Handle 300 Multiple Choices (ambiguous player)
+    if (error instanceof ApiError && error.status === 300 && error.data) {
+      const ambiguous = error.data as unknown as ResearchResponseAmbiguous;
+      if (ambiguous && ambiguous.status === "ambiguous") {
+        return ambiguous;
+      }
+    }
+    throw error;
+  }
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
@@ -23,6 +35,21 @@ export async function getReportByPlayer(
   return apiClient.get<ScoutingReport>(
     `/api/v1/scouting/reports/${encodeURIComponent(playerName)}`
   );
+}
+
+export async function getReportByPlayerName(
+  playerName: string
+): Promise<ScoutingReport | null> {
+  try {
+    return await apiClient.get<ScoutingReport>(
+      `/api/v1/scouting/reports/by-name/${encodeURIComponent(playerName)}`
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function listReports(

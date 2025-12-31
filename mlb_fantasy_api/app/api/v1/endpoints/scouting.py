@@ -155,16 +155,13 @@ async def research_player(
 
     try:
         async with httpx.AsyncClient() as client:
-            # Include both player_id and player_name for job
-            job_args = {"player_name": player_name}
-            if player_id:
-                job_args["player_id"] = str(player_id)
-
+            # Only pass player_name - the job doesn't need player_id
+            # player_id is used for caching after the job completes
             response = await client.post(
                 f"{settings.jobs_api_url}/api/v1/jobs",
                 json={
                     "task_name": "agents.research_player",
-                    "args": job_args,
+                    "args": {"player_name": player_name},
                 },
                 timeout=10.0,
             )

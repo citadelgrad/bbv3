@@ -76,8 +76,10 @@ export default function ScoutPage() {
           return;
         }
 
-        if (jobStatus.status === "failed") {
-          throw new Error(jobStatus.error || "Research job failed");
+        if (jobStatus.status === "failed" || jobStatus.status === "failure") {
+          throw new Error(
+            jobStatus.error_message || jobStatus.error || "Research job failed"
+          );
         }
 
         // Still running, update message and wait

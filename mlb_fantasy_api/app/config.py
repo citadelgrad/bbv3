@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # Jobs Service
     jobs_api_url: str = "http://localhost:8001"
 
+    # Scouting Reports
+    report_ttl_days: int = 14  # Reports expire after 2 weeks
+
     @property
     def is_development(self) -> bool:
         return self.app_env == "development"

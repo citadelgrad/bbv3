@@ -7,17 +7,31 @@ export class ApiError extends Error {
   status: number;
   code: string;
   details?: Record<string, unknown>;
+  data?: Record<string, unknown>;
 
   constructor(status: number, error: Record<string, unknown>) {
     const errorObj = error.error as Record<string, unknown> | undefined;
-    super(
-      (errorObj?.message as string) ||
-        (error.detail as string) ||
-        "An error occurred"
-    );
+
+    // Handle different error response formats
+    let message = "An error occurred";
+
+    if (errorObj?.message && typeof errorObj.message === "string") {
+      message = errorObj.message;
+    } else if (typeof error.detail === "string") {
+      message = error.detail;
+    } else if (Array.isArray(error.detail) && error.detail.length > 0) {
+      // FastAPI validation error format
+      const firstError = error.detail[0] as { msg?: string };
+      message = firstError.msg || "Validation error";
+    } else if (typeof error.message === "string") {
+      message = error.message;
+    }
+
+    super(message);
     this.status = status;
     this.code = (errorObj?.code as string) || "UNKNOWN_ERROR";
     this.details = errorObj?.details as Record<string, unknown> | undefined;
+    this.data = error;
   }
 }
 
@@ -48,13 +62,29 @@ class ApiClient {
       (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      ...options,
-      headers,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${endpoint}`, {
+        ...options,
+        headers,
+      });
+    } catch (err) {
+      // Network error (CORS, offline, server unreachable)
+      throw new ApiError(0, {
+        detail:
+          err instanceof Error
+            ? `Network error: ${err.message}`
+            : "Network error: Unable to reach server",
+      });
+    }
 
     if (!response.ok) {
-      const error = await response.json();
+      let error: Record<string, unknown>;
+      try {
+        error = await response.json();
+      } catch {
+        error = { detail: `Server error: ${response.status} ${response.statusText}` };
+      }
       throw new ApiError(response.status, error);
     }
 

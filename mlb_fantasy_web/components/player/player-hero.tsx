@@ -2,11 +2,17 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar } from "@/components/ui/avatar"
 import { cn } from "@/lib/utils"
-import type { MockPlayer } from "@/lib/mock-data"
 import { toast } from "sonner"
 
+interface PlayerData {
+  id: string
+  fullName: string
+  team: string
+  position: string
+}
+
 interface PlayerHeroProps {
-  player: MockPlayer
+  player: PlayerData
   aiScore?: number
   grade?: string
   className?: string

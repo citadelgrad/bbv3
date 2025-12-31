@@ -1,12 +1,13 @@
 """Service layer for scouting report operations."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.core.logging import logger
 from app.models.player import Player
 from app.models.scouting_report import ScoutingReport
@@ -268,6 +269,12 @@ async def create_new_version(
             "Marking previous report as not current",
             previous_id=str(current_report.id),
             previous_version=current_report.version,
+        )
+
+    # Ensure expires_at is set using configured TTL if not provided
+    if "expires_at" not in report_data:
+        report_data["expires_at"] = datetime.now(UTC) + timedelta(
+            days=settings.report_ttl_days
         )
 
     # Create new report

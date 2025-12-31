@@ -1,136 +1,453 @@
 "use client"
 
 import { useParams } from "next/navigation"
+import { useEffect, useState, useCallback } from "react"
 import { PlayerHero } from "@/components/player/player-hero"
 import { ScoutingCard } from "@/components/player/scouting-card"
-import { StatsGrid } from "@/components/player/stats-grid"
 import { ToolRatings } from "@/components/player/tool-ratings"
 import { ProjectionsTable } from "@/components/player/projections-table"
 import { Comparables } from "@/components/player/comparables"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { getPlayerById } from "@/lib/api/players"
+import {
+  getReportByPlayerName,
+  researchPlayer,
+  getJobStatus,
+} from "@/lib/api/scouting"
+import type { Player, ScoutingReport } from "@/lib/api/types"
 import { mockPlayers } from "@/lib/mock-data"
+import { toast } from "sonner"
+import ReactMarkdown from "react-markdown"
+
+type PageStatus = "loading" | "ready" | "not_found" | "error"
+type ReportStatus = "loading" | "not_found" | "generating" | "ready" | "error"
 
 export default function PlayerPage() {
   const params = useParams()
   const playerId = params.id as string
 
-  // Find player from mock data, or use first player as fallback
-  const player = mockPlayers.find((p) => p.id === playerId) || mockPlayers[0]
+  // Player data state
+  const [pageStatus, setPageStatus] = useState<PageStatus>("loading")
+  const [player, setPlayer] = useState<Player | null>(null)
+  const [pageError, setPageError] = useState<string | null>(null)
 
-  // Mock scouting report data
-  const scoutingReport = {
-    recentPerformance:
-      "Ohtani continues to be the most dominant two-way player in baseball. His recent 5-game hitting streak includes 3 home runs and 8 RBIs. His plate discipline remains elite with a 12% walk rate.",
-    fantasyVerdict:
-      "MUST START - Ohtani is a league-winner in any format. His combination of power, speed, and pitching makes him the most valuable fantasy asset available.",
-    injuryStatus: "Healthy - No injury concerns. Full workload expected for the remainder of the season.",
-    deepResearch: [
-      "Ohtani's hard hit rate of 52.3% ranks in the 98th percentile among all MLB hitters. His expected slugging percentage (.612) suggests his power output is sustainable.",
-      "His stolen base success rate of 87% shows excellent base-running instincts. With 59 steals this season, he's a true 40-40 candidate.",
-      "Pitching metrics remain elite: 11.4 K/9, 2.8 BB/9, and a 0.95 WHIP. His splitter continues to generate swings and misses at a 42% rate.",
-    ],
+  // Scouting report state
+  const [reportStatus, setReportStatus] = useState<ReportStatus>("loading")
+  const [scoutingReport, setScoutingReport] = useState<ScoutingReport | null>(null)
+  const [pollingMessage, setPollingMessage] = useState("")
+  const [error, setError] = useState<string | null>(null)
+
+  // Check if string is a valid UUID format
+  const isValidUUID = (str: string) => {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    return uuidRegex.test(str)
   }
 
-  const seasonStats = [
-    { label: "AVG", value: ".304", trend: 2.1 },
-    { label: "HR", value: "54", trend: 8.5 },
-    { label: "OPS", value: "1.036", trend: 3.2 },
-    { label: "SB", value: "59", trend: 15.0 },
-  ]
+  // Convert mock player to Player type
+  const mockToPlayer = (mock: typeof mockPlayers[0]): Player => ({
+    id: mock.id,
+    full_name: mock.fullName,
+    first_name: mock.firstName,
+    last_name: mock.lastName,
+    name_suffix: null,
+    name_normalized: mock.fullName.toLowerCase(),
+    mlb_id: mock.mlbId,
+    fangraphs_id: null,
+    baseball_reference_id: null,
+    yahoo_fantasy_id: null,
+    espn_fantasy_id: null,
+    birth_date: null,
+    current_team: mock.team,
+    current_team_abbrev: mock.teamAbbrev,
+    primary_position: mock.position,
+    bats: null,
+    throws: null,
+    status: mock.status,
+    mlb_org: null,
+    minor_league_level: null,
+    is_active: mock.status === "active",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  })
 
-  const recentStats = [
-    { label: "AVG", value: ".342" },
-    { label: "Hard Hit %", value: "52.3%" },
-    { label: "xSLG", value: ".612" },
-    { label: "Proj. HR", value: "58" },
-  ]
+  // Fetch player data on mount
+  useEffect(() => {
+    async function fetchPlayer() {
+      setPageStatus("loading")
+      setPageError(null)
+
+      // If not a UUID, try to find in mock data (backward compatibility)
+      if (!isValidUUID(playerId)) {
+        const mockPlayer = mockPlayers.find((p) => p.id === playerId)
+        if (mockPlayer) {
+          setPlayer(mockToPlayer(mockPlayer))
+          setPageStatus("ready")
+          return
+        }
+        setPageStatus("not_found")
+        setPageError(`Player not found`)
+        return
+      }
+
+      // Fetch from API for UUID format
+      try {
+        const playerData = await getPlayerById(playerId)
+        if (playerData) {
+          setPlayer(playerData)
+          setPageStatus("ready")
+        } else {
+          setPageStatus("not_found")
+          setPageError(`Player not found`)
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to fetch player"
+        setPageError(message)
+        setPageStatus("error")
+      }
+    }
+
+    fetchPlayer()
+  }, [playerId])
+
+  // Fetch scouting report when player is loaded
+  useEffect(() => {
+    if (!player) return
+
+    const playerName = player.full_name
+
+    async function fetchReport() {
+      setReportStatus("loading")
+      setError(null)
+
+      try {
+        const report = await getReportByPlayerName(playerName)
+        if (report) {
+          setScoutingReport(report)
+          setReportStatus("ready")
+        } else {
+          setReportStatus("not_found")
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to fetch report"
+        setError(message)
+        setReportStatus("error")
+      }
+    }
+
+    fetchReport()
+  }, [player])
+
+  // Handle report generation
+  const handleGenerateReport = useCallback(async () => {
+    if (!player) return
+
+    setReportStatus("generating")
+    setError(null)
+
+    try {
+      const response = await researchPlayer(player.full_name)
+
+      if (response.status === "cached" || response.status === "generated") {
+        setScoutingReport(response.report)
+        setReportStatus("ready")
+        toast.success(`Report ready for ${player.full_name}`)
+      } else if (response.status === "pending") {
+        setPollingMessage(`Researching ${player.full_name}...`)
+        await pollForCompletion(response.job_id, player.full_name)
+      } else if (response.status === "ambiguous") {
+        const candidateNames = response.candidates
+          .map((c) => `${c.full_name} (${c.current_team_abbrev || "N/A"})`)
+          .join(", ")
+        setError(
+          `Multiple players found matching "${player.full_name}": ${candidateNames}. Please use the Scout page for more control.`
+        )
+        setReportStatus("error")
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to generate report"
+      setError(message)
+      setReportStatus("error")
+      toast.error(message)
+    }
+  }, [player])
+
+  // Poll for job completion
+  async function pollForCompletion(jobId: string, playerName: string) {
+    const maxAttempts = 60
+    const intervalMs = 2000
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const jobStatus = await getJobStatus(jobId)
+
+        if (jobStatus.status === "success" && jobStatus.result) {
+          const reportData: ScoutingReport = {
+            id: jobStatus.result.report_id,
+            player_name: jobStatus.result.player_name,
+            player_name_normalized: jobStatus.result.player_name.toLowerCase(),
+            summary: jobStatus.result.summary,
+            recent_stats: jobStatus.result.recent_stats,
+            injury_status: jobStatus.result.injury_status,
+            fantasy_outlook: jobStatus.result.fantasy_outlook,
+            detailed_analysis: jobStatus.result.detailed_analysis,
+            sources: jobStatus.result.sources,
+            token_usage: jobStatus.result.token_usage,
+            created_at: jobStatus.result.created_at,
+            expires_at: jobStatus.result.expires_at,
+          }
+          setScoutingReport(reportData)
+          setReportStatus("ready")
+          toast.success(`Report generated for ${playerName}`)
+          return
+        }
+
+        if (jobStatus.status === "failed" || jobStatus.status === "failure") {
+          throw new Error(
+            jobStatus.error_message || jobStatus.error || "Research job failed"
+          )
+        }
+
+        setPollingMessage(
+          `Researching ${playerName}... (${Math.floor((attempt * intervalMs) / 1000)}s)`
+        )
+        await new Promise((resolve) => setTimeout(resolve, intervalMs))
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Polling failed"
+        setError(message)
+        setReportStatus("error")
+        toast.error(message)
+        return
+      }
+    }
+
+    setError("Research timed out. Please try again.")
+    setReportStatus("error")
+    toast.error("Research timed out")
+  }
+
+  // Loading state for entire page
+  if (pageStatus === "loading") {
+    return (
+      <div className="flex-1 p-6 lg:p-8">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-4">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+              <p className="text-muted-foreground">Loading player...</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // Player not found
+  if (pageStatus === "not_found" || pageStatus === "error" || !player) {
+    return (
+      <div className="flex-1 p-6 lg:p-8">
+        <Card className="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950">
+          <CardContent className="pt-6">
+            <div className="text-center py-8">
+              <span className="material-symbols-outlined text-4xl text-red-400 mb-4 block">
+                error
+              </span>
+              <h3 className="text-lg font-semibold mb-2 text-red-600 dark:text-red-400">
+                {pageStatus === "not_found" ? "Player Not Found" : "Error Loading Player"}
+              </h3>
+              <p className="text-muted-foreground mb-4">
+                {pageError || "The requested player could not be found."}
+              </p>
+              <Button variant="outline" onClick={() => window.history.back()}>
+                Go Back
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // Transform player data for PlayerHero
+  const playerHeroData = {
+    id: player.id,
+    fullName: player.full_name,
+    team: player.current_team || "Unknown",
+    position: player.primary_position || "Unknown",
+  }
 
   const toolRatings = [
-    { label: "Power", abbreviation: "PWR", value: 95 },
-    { label: "Hit Tool", abbreviation: "AVG", value: 85 },
-    { label: "Speed", abbreviation: "SPD", value: 80 },
-    { label: "Defense", abbreviation: "DEF", value: 60 },
-    { label: "Arm", abbreviation: "ARM", value: 90 },
-    { label: "On-Base", abbreviation: "OBS", value: 88 },
+    { label: "Power", abbreviation: "PWR", value: 85 },
+    { label: "Hit Tool", abbreviation: "AVG", value: 80 },
+    { label: "Speed", abbreviation: "SPD", value: 75 },
+    { label: "Defense", abbreviation: "DEF", value: 70 },
+    { label: "Arm", abbreviation: "ARM", value: 75 },
+    { label: "On-Base", abbreviation: "OBS", value: 80 },
   ]
 
   const projections = [
-    { category: "AVG", value: ".298", confidence: "high" as const },
-    { category: "HR", value: "58", confidence: "high" as const },
-    { category: "RBI", value: "135", confidence: "medium" as const },
-    { category: "SB", value: "62", confidence: "high" as const },
-    { category: "OPS", value: "1.025", confidence: "high" as const },
+    { category: "AVG", value: ".285", confidence: "medium" as const },
+    { category: "HR", value: "35", confidence: "medium" as const },
+    { category: "RBI", value: "100", confidence: "medium" as const },
+    { category: "SB", value: "15", confidence: "medium" as const },
+    { category: "OPS", value: ".850", confidence: "medium" as const },
   ]
 
   const comparables = [
-    { id: "comp-1", name: "Aaron Judge", team: "NYY", similarity: 96 },
-    { id: "comp-2", name: "Yordan Alvarez", team: "HOU", similarity: 92 },
-    { id: "comp-3", name: "Juan Soto", team: "NYM", similarity: 89 },
+    { id: "comp-1", name: "Similar Player 1", team: "---", similarity: 85 },
+    { id: "comp-2", name: "Similar Player 2", team: "---", similarity: 80 },
+    { id: "comp-3", name: "Similar Player 3", team: "---", similarity: 75 },
   ]
 
-  const strengths = [
-    "Elite power with 95th percentile exit velocity",
-    "Rare 50-50 potential (HR + SB)",
-    "Two-way value in points leagues",
-    "Consistent plate discipline",
-  ]
+  // Render scouting section
+  const renderScoutingSection = () => {
+    if (reportStatus === "loading") {
+      return (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-4">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+              <p className="text-muted-foreground">Loading scouting report...</p>
+            </div>
+          </CardContent>
+        </Card>
+      )
+    }
 
-  const weaknesses = [
-    "High strikeout rate (23%)",
-    "Slight platoon split vs LHP",
-    "Workload concerns as two-way player",
-  ]
+    if (reportStatus === "not_found") {
+      return (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center py-8">
+              <span className="material-symbols-outlined text-4xl text-muted-foreground mb-4 block">
+                search
+              </span>
+              <h3 className="text-lg font-semibold mb-2">No Scouting Report Available</h3>
+              <p className="text-muted-foreground mb-6">
+                Generate an AI-powered scouting report for {player.full_name}
+              </p>
+              <Button onClick={handleGenerateReport} size="lg">
+                <span className="material-symbols-outlined mr-2">auto_awesome</span>
+                Generate Scouting Report
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )
+    }
+
+    if (reportStatus === "generating") {
+      return (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-4">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+              <div>
+                <p className="text-muted-foreground">{pollingMessage}</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Deep research may take 30-60 seconds...
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )
+    }
+
+    if (reportStatus === "error") {
+      return (
+        <Card className="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950">
+          <CardContent className="pt-6">
+            <p className="text-red-600 dark:text-red-400 mb-4">{error}</p>
+            <Button onClick={handleGenerateReport} variant="outline">
+              Try Again
+            </Button>
+          </CardContent>
+        </Card>
+      )
+    }
+
+    if (scoutingReport) {
+      return (
+        <>
+          <ScoutingCard title="AI Scouting Summary" variant="success">
+            <div className="prose prose-sm dark:prose-invert max-w-none">
+              <ReactMarkdown>{scoutingReport.summary}</ReactMarkdown>
+            </div>
+          </ScoutingCard>
+
+          <div className="grid gap-6 lg:grid-cols-12">
+            <div className="space-y-6 lg:col-span-4">
+              <ScoutingCard title="Fantasy Outlook">
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <ReactMarkdown>{scoutingReport.fantasy_outlook}</ReactMarkdown>
+                </div>
+              </ScoutingCard>
+              <ScoutingCard title="Injury Status">
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <ReactMarkdown>{scoutingReport.injury_status}</ReactMarkdown>
+                </div>
+              </ScoutingCard>
+            </div>
+
+            <div className="lg:col-span-8">
+              <div className="rounded-xl border border-border bg-card p-4">
+                <h3 className="mb-4 font-semibold">Deep Research & Analysis</h3>
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <ReactMarkdown>{scoutingReport.detailed_analysis}</ReactMarkdown>
+                </div>
+                <div className="mt-6">
+                  <h4 className="mb-3 text-sm font-medium">Recent Stats</h4>
+                  <div className="prose prose-sm dark:prose-invert max-w-none">
+                    <ReactMarkdown>{scoutingReport.recent_stats}</ReactMarkdown>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {scoutingReport.sources && scoutingReport.sources.length > 0 && (
+            <Card>
+              <CardContent className="pt-6">
+                <h3 className="mb-3 font-semibold text-sm">Sources</h3>
+                <div className="flex flex-wrap gap-2">
+                  {scoutingReport.sources.map((source, idx) => (
+                    <a
+                      key={idx}
+                      href={source.uri}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-muted text-xs text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-sm">link</span>
+                      {source.title}
+                    </a>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-3">
+                  Report generated: {new Date(scoutingReport.created_at).toLocaleDateString()}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )
+    }
+
+    return null
+  }
 
   return (
     <div className="flex-1 space-y-6 p-6 lg:p-8">
-      {/* Player Hero */}
-      <PlayerHero player={player} aiScore={99} grade="A+" />
+      <PlayerHero player={playerHeroData} aiScore={75} grade="B+" />
 
-      {/* AI Scouting Report - Recent Performance Pulse */}
-      <ScoutingCard title="Recent Performance Pulse" variant="success">
-        <p className="text-foreground">{scoutingReport.recentPerformance}</p>
-      </ScoutingCard>
+      {renderScoutingSection()}
 
-      {/* Main Content Grid */}
-      <div className="grid gap-6 lg:grid-cols-12">
-        {/* Left Column - Verdict + Injury */}
-        <div className="space-y-6 lg:col-span-4">
-          <ScoutingCard title="Fantasy Verdict">
-            <p className="text-foreground">{scoutingReport.fantasyVerdict}</p>
-          </ScoutingCard>
-          <ScoutingCard title="Injury Status">
-            <p className="text-foreground">{scoutingReport.injuryStatus}</p>
-          </ScoutingCard>
-        </div>
-
-        {/* Right Column - Deep Research */}
-        <div className="lg:col-span-8">
-          <div className="rounded-xl border border-border bg-card p-4">
-            <h3 className="mb-4 font-semibold">Deep Research & Analysis</h3>
-            <div className="space-y-4">
-              {scoutingReport.deepResearch.map((paragraph, i) => (
-                <p key={i} className="text-sm text-muted-foreground leading-relaxed">
-                  {paragraph}
-                </p>
-              ))}
-            </div>
-            <div className="mt-6">
-              <h4 className="mb-3 text-sm font-medium">Recent Stats Breakdown</h4>
-              <StatsGrid stats={recentStats} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Season Stats + Tool Ratings */}
       <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card p-4">
-          <h3 className="mb-4 font-semibold">Season Stats</h3>
-          <StatsGrid stats={seasonStats} columns={4} />
-        </div>
         <ToolRatings ratings={toolRatings} />
+        <ProjectionsTable projections={projections} />
       </div>
 
-      {/* Fantasy Points Trend (Placeholder) */}
       <div className="rounded-xl border border-border bg-card p-4">
         <h3 className="mb-4 font-semibold">Fantasy Points Trend (Last 10 Games)</h3>
         <div className="flex h-32 items-end justify-between gap-2">
@@ -148,42 +465,7 @@ export default function PlayerPage() {
         </div>
       </div>
 
-      {/* Bottom Grid - Strengths/Weaknesses + Projections + Comparables */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Strengths & Weaknesses */}
-        <div className="rounded-xl border border-border bg-card p-4">
-          <h3 className="mb-4 font-semibold">Scouting Report</h3>
-          <div className="mb-4">
-            <h4 className="mb-2 text-sm font-medium text-emerald-400">Strengths</h4>
-            <ul className="space-y-1">
-              {strengths.map((s, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
-                  <span className="material-symbols-outlined text-emerald-400 text-base mt-0.5">
-                    check_circle
-                  </span>
-                  {s}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <h4 className="mb-2 text-sm font-medium text-red-400">Weaknesses</h4>
-            <ul className="space-y-1">
-              {weaknesses.map((w, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
-                  <span className="material-symbols-outlined text-red-400 text-base mt-0.5">
-                    warning
-                  </span>
-                  {w}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-
-        <ProjectionsTable projections={projections} />
-        <Comparables comparables={comparables} />
-      </div>
+      <Comparables comparables={comparables} />
     </div>
   )
 }
