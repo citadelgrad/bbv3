@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import { Header } from "@/components/layout/header";
+import { Sidebar } from "@/components/layout/sidebar";
 
 export default async function ProtectedLayout({
   children,
@@ -17,9 +17,9 @@ export default async function ProtectedLayout({
   }
 
   return (
-    <div className="min-h-screen">
-      <Header user={user} />
-      <main className="container mx-auto py-8 px-4">{children}</main>
+    <div className="flex min-h-screen">
+      <Sidebar user={user} />
+      <main className="flex-1 overflow-auto">{children}</main>
     </div>
   );
 }
