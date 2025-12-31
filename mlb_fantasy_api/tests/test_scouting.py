@@ -9,6 +9,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from app.models.player import Player
 from app.models.scouting_report import ScoutingReport
 
 
@@ -20,8 +21,23 @@ class TestResearchPlayerEndpoint:
         self, client: AsyncClient, test_session, valid_token
     ):
         """Test that cached reports are returned with 200 status."""
-        # Create a cached report
+        # Create a player in the registry first
+        player = Player(
+            full_name="Shohei Ohtani",
+            name_normalized="shohei ohtani",
+            first_name="Shohei",
+            last_name="Ohtani",
+            mlb_id=660271,
+            current_team_abbrev="LAD",
+            primary_position="DH",
+            status="active",
+        )
+        test_session.add(player)
+        await test_session.flush()
+
+        # Create a cached report linked to the player
         report = ScoutingReport(
+            player_id=player.id,
             player_name="Shohei Ohtani",
             player_name_normalized="shohei ohtani",
             summary="Elite two-way player having MVP season",
@@ -55,10 +71,21 @@ class TestResearchPlayerEndpoint:
 
     @pytest.mark.asyncio
     async def test_research_player_triggers_job_on_cache_miss(
-        self, client: AsyncClient, valid_token
+        self, client: AsyncClient, test_session, valid_token
     ):
         """Test that cache miss triggers a background job."""
         import httpx
+
+        # Create a player in the registry (but no cached report)
+        player = Player(
+            full_name="New Player",
+            name_normalized="new player",
+            first_name="New",
+            last_name="Player",
+            status="active",
+        )
+        test_session.add(player)
+        await test_session.commit()
 
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.json.return_value = {"id": "test-job-id-123"}
@@ -78,7 +105,7 @@ class TestResearchPlayerEndpoint:
 
             response = await client.post(
                 "/api/v1/scouting/research",
-                json={"player_name": "Unknown Player XYZ"},
+                json={"player_name": "New Player"},
                 headers={"Authorization": f"Bearer {valid_token}"},
             )
 
@@ -87,6 +114,21 @@ class TestResearchPlayerEndpoint:
         assert data["status"] == "pending"
         assert data["job_id"] == "test-job-id-123"
         assert "Poll" in data["message"]
+
+    @pytest.mark.asyncio
+    async def test_research_player_not_found_in_registry(
+        self, client: AsyncClient, valid_token
+    ):
+        """Test that 404 is returned when player not in registry."""
+        response = await client.post(
+            "/api/v1/scouting/research",
+            json={"player_name": "Unknown Player XYZ"},
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "not found in registry" in data["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_research_player_requires_auth(self, client: AsyncClient):
@@ -121,10 +163,21 @@ class TestResearchPlayerEndpoint:
 
     @pytest.mark.asyncio
     async def test_research_player_handles_jobs_service_unavailable(
-        self, client: AsyncClient, valid_token
+        self, client: AsyncClient, test_session, valid_token
     ):
         """Test graceful handling when Jobs service is unavailable."""
         import httpx
+
+        # Create a player in the registry first
+        player = Player(
+            full_name="Aaron Judge",
+            name_normalized="aaron judge",
+            first_name="Aaron",
+            last_name="Judge",
+            status="active",
+        )
+        test_session.add(player)
+        await test_session.commit()
 
         async def mock_post(*args, **kwargs):
             raise httpx.RequestError("Connection refused")
@@ -219,7 +272,7 @@ class TestGetJobStatusEndpoint:
 
 
 class TestGetReportByPlayerEndpoint:
-    """Tests for GET /api/v1/scouting/reports/{player_name} endpoint."""
+    """Tests for GET /api/v1/scouting/reports/by-name/{player_name} endpoint."""
 
     @pytest.mark.asyncio
     async def test_get_report_returns_report(
@@ -247,7 +300,7 @@ class TestGetReportByPlayerEndpoint:
         await test_session.commit()
 
         response = await client.get(
-            "/api/v1/scouting/reports/Mookie Betts",
+            "/api/v1/scouting/reports/by-name/Mookie Betts",
             headers={"Authorization": f"Bearer {valid_token}"},
         )
 
@@ -259,7 +312,7 @@ class TestGetReportByPlayerEndpoint:
     async def test_get_report_not_found(self, client: AsyncClient, valid_token):
         """Test 404 when report not found."""
         response = await client.get(
-            "/api/v1/scouting/reports/NonExistent Player",
+            "/api/v1/scouting/reports/by-name/NonExistent Player",
             headers={"Authorization": f"Bearer {valid_token}"},
         )
 
@@ -291,7 +344,7 @@ class TestGetReportByPlayerEndpoint:
         await test_session.commit()
 
         response = await client.get(
-            "/api/v1/scouting/reports/Old Report Player",
+            "/api/v1/scouting/reports/by-name/Old Report Player",
             headers={"Authorization": f"Bearer {valid_token}"},
         )
 
@@ -323,7 +376,7 @@ class TestGetReportByPlayerEndpoint:
         await test_session.commit()
 
         response = await client.get(
-            "/api/v1/scouting/reports/Expired Player?include_expired=true",
+            "/api/v1/scouting/reports/by-name/Expired Player?include_expired=true",
             headers={"Authorization": f"Bearer {valid_token}"},
         )
 

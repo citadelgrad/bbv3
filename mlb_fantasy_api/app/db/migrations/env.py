@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.config import settings
 from app.models.base import Base
-from app.models.user_profile import UserProfile  # noqa: F401 - imported for metadata
+
+# Import all models for Alembic metadata detection
+from app.models.player import Player  # noqa: F401
+from app.models.player_alias import PlayerNameAlias  # noqa: F401
+from app.models.scouting_report import ScoutingReport  # noqa: F401
+from app.models.user_profile import UserProfile  # noqa: F401
 
 config = context.config
 

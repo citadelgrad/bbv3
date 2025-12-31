@@ -322,8 +322,8 @@ class TestCheckCache:
     """Tests for the check_cache function."""
 
     @pytest.mark.asyncio
-    async def test_returns_cached_report(self, test_session):
-        """Test that cached report is returned."""
+    async def test_returns_cached_report_by_name(self, test_session):
+        """Test that cached report is returned when searching by name."""
         report = ScoutingReport(
             player_name="Cached Player",
             player_name_normalized="cached player",
@@ -344,7 +344,9 @@ class TestCheckCache:
         test_session.add(report)
         await test_session.commit()
 
-        result = await scouting_service.check_cache(test_session, "Cached Player")
+        result = await scouting_service.check_cache(
+            test_session, player_name="Cached Player"
+        )
 
         assert result is not None
         assert result.player_name == "Cached Player"
@@ -372,13 +374,24 @@ class TestCheckCache:
         test_session.add(report)
         await test_session.commit()
 
-        result = await scouting_service.check_cache(test_session, "Expired Cache")
+        result = await scouting_service.check_cache(
+            test_session, player_name="Expired Cache"
+        )
 
         assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_for_missing(self, test_session):
         """Test that None is returned for missing player."""
-        result = await scouting_service.check_cache(test_session, "Missing Player")
+        result = await scouting_service.check_cache(
+            test_session, player_name="Missing Player"
+        )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_identifier(self, test_session):
+        """Test that None is returned when no identifier provided."""
+        result = await scouting_service.check_cache(test_session)
 
         assert result is None
