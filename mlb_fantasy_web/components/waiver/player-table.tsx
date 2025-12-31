@@ -6,21 +6,91 @@ import { Badge } from "@/components/ui/badge"
 import { Avatar } from "@/components/ui/avatar"
 import { Progress } from "@/components/ui/progress"
 import { cn } from "@/lib/utils"
-import type { MockPlayer } from "@/lib/mock-data"
+import type { Player } from "@/lib/api/types"
 import { toast } from "sonner"
 
+export interface WaiverPlayer extends Player {
+  // Optional stats - may not be available from API yet
+  stats?: {
+    avg: number
+    hr: number
+    rbi: number
+    sb: number
+    ops: number
+  }
+  outlook?: number
+}
+
 interface PlayerTableProps {
-  players: MockPlayer[]
+  players: WaiverPlayer[]
+  total?: number
+  page?: number
+  pageSize?: number
+  onPageChange?: (page: number) => void
+  isLoading?: boolean
   className?: string
 }
 
-export function PlayerTable({ players, className }: PlayerTableProps) {
-  const handleClaim = (player: MockPlayer) => {
-    toast.success(`Waiver claim submitted for ${player.fullName}`)
+export function PlayerTable({
+  players,
+  total = 0,
+  page = 1,
+  pageSize = 20,
+  onPageChange,
+  isLoading = false,
+  className,
+}: PlayerTableProps) {
+  const handleClaim = (player: WaiverPlayer) => {
+    toast.success(`Waiver claim submitted for ${player.full_name}`)
   }
 
-  const handleWatch = (player: MockPlayer) => {
-    toast.success(`${player.fullName} added to watchlist`)
+  const handleWatch = (player: WaiverPlayer) => {
+    toast.success(`${player.full_name} added to watchlist`)
+  }
+
+  const totalPages = Math.ceil(total / pageSize)
+  const startIndex = (page - 1) * pageSize + 1
+  const endIndex = Math.min(page * pageSize, total)
+
+  // Generate page numbers to display
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = []
+    if (totalPages <= 5) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
+    } else {
+      if (page <= 3) {
+        pages.push(1, 2, 3, "...", totalPages)
+      } else if (page >= totalPages - 2) {
+        pages.push(1, "...", totalPages - 2, totalPages - 1, totalPages)
+      } else {
+        pages.push(1, "...", page, "...", totalPages)
+      }
+    }
+    return pages
+  }
+
+  if (isLoading) {
+    return (
+      <div className={cn("rounded-xl border border-border bg-card p-8", className)}>
+        <div className="flex items-center justify-center gap-3">
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+          <p className="text-muted-foreground">Loading players...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (players.length === 0) {
+    return (
+      <div className={cn("rounded-xl border border-border bg-card p-8", className)}>
+        <div className="text-center">
+          <span className="material-symbols-outlined text-4xl text-muted-foreground mb-2 block">
+            person_search
+          </span>
+          <p className="text-muted-foreground">No players found</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -28,7 +98,7 @@ export function PlayerTable({ players, className }: PlayerTableProps) {
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h3 className="font-semibold">Available Players</h3>
         <span className="text-sm text-muted-foreground">
-          Showing 1-{players.length} of 97 results
+          Showing {startIndex}-{endIndex} of {total} results
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -38,7 +108,7 @@ export function PlayerTable({ players, className }: PlayerTableProps) {
               <th className="px-4 py-3 font-medium">Rank</th>
               <th className="px-4 py-3 font-medium">Player</th>
               <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Matchup Rating</th>
+              <th className="px-4 py-3 font-medium">Position</th>
               <th className="px-4 py-3 font-medium text-right">AVG</th>
               <th className="px-4 py-3 font-medium text-right">HR</th>
               <th className="px-4 py-3 font-medium text-right">RBI</th>
@@ -55,7 +125,7 @@ export function PlayerTable({ players, className }: PlayerTableProps) {
               >
                 <td className="px-4 py-3">
                   <div className="flex size-6 items-center justify-center rounded-full bg-primary/20 text-xs font-bold text-primary">
-                    {index + 1}
+                    {startIndex + index}
                   </div>
                 </td>
                 <td className="px-4 py-3">
@@ -63,46 +133,42 @@ export function PlayerTable({ players, className }: PlayerTableProps) {
                     href={`/player/${player.id}`}
                     className="flex items-center gap-3 hover:text-primary"
                   >
-                    <Avatar alt={player.fullName} size="sm" />
+                    <Avatar alt={player.full_name} size="sm" />
                     <div>
-                      <p className="font-medium">{player.fullName}</p>
+                      <p className="font-medium">{player.full_name}</p>
                       <p className="text-xs text-muted-foreground">
-                        {player.position} - {player.teamAbbrev}
+                        {player.current_team_abbrev || player.current_team || "FA"}
                       </p>
                     </div>
                   </Link>
                 </td>
                 <td className="px-4 py-3">
                   <Badge
-                    variant={index % 3 === 0 ? "success" : index % 3 === 1 ? "warning" : "outline"}
+                    variant={player.is_active ? "success" : "warning"}
                     size="sm"
                   >
-                    {index % 3 === 0 ? "Free Agent" : index % 3 === 1 ? "Waivers" : "Owned"}
+                    {player.is_active ? "Active" : player.status}
                   </Badge>
                 </td>
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <Progress
-                      value={player.outlook || 70}
-                      className="w-20"
-                      indicatorClassName={
-                        (player.outlook || 70) >= 80
-                          ? "bg-emerald-500"
-                          : (player.outlook || 70) >= 60
-                            ? "bg-yellow-500"
-                            : "bg-red-500"
-                      }
-                    />
-                  </div>
+                  <Badge variant="outline" size="sm">
+                    {player.primary_position || "N/A"}
+                  </Badge>
                 </td>
                 <td className="px-4 py-3 text-right font-mono text-sm">
-                  {player.stats.avg > 0 ? player.stats.avg.toFixed(3) : "-"}
+                  {player.stats?.avg ? player.stats.avg.toFixed(3) : "-"}
                 </td>
-                <td className="px-4 py-3 text-right font-mono text-sm">{player.stats.hr || "-"}</td>
-                <td className="px-4 py-3 text-right font-mono text-sm">{player.stats.rbi || "-"}</td>
-                <td className="px-4 py-3 text-right font-mono text-sm">{player.stats.sb || "-"}</td>
                 <td className="px-4 py-3 text-right font-mono text-sm">
-                  {player.stats.ops > 0 ? player.stats.ops.toFixed(3) : "-"}
+                  {player.stats?.hr ?? "-"}
+                </td>
+                <td className="px-4 py-3 text-right font-mono text-sm">
+                  {player.stats?.rbi ?? "-"}
+                </td>
+                <td className="px-4 py-3 text-right font-mono text-sm">
+                  {player.stats?.sb ?? "-"}
+                </td>
+                <td className="px-4 py-3 text-right font-mono text-sm">
+                  {player.stats?.ops ? player.stats.ops.toFixed(3) : "-"}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-1">
@@ -124,29 +190,51 @@ export function PlayerTable({ players, className }: PlayerTableProps) {
         </table>
       </div>
       {/* Pagination */}
-      <div className="flex items-center justify-between border-t border-border px-4 py-3">
-        <Button variant="outline" size="sm" disabled>
-          Previous
-        </Button>
-        <div className="flex gap-1">
-          {[1, 2, 3, "...", 10].map((page, i) => (
-            <button
-              key={i}
-              className={cn(
-                "flex size-8 items-center justify-center rounded-md text-sm",
-                page === 1
-                  ? "bg-primary text-primary-foreground"
-                  : "hover:bg-muted text-muted-foreground"
-              )}
-            >
-              {page}
-            </button>
-          ))}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between border-t border-border px-4 py-3">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => onPageChange?.(page - 1)}
+          >
+            Previous
+          </Button>
+          <div className="flex gap-1">
+            {getPageNumbers().map((pageNum, i) =>
+              typeof pageNum === "number" ? (
+                <button
+                  key={i}
+                  onClick={() => onPageChange?.(pageNum)}
+                  className={cn(
+                    "flex size-8 items-center justify-center rounded-md text-sm",
+                    pageNum === page
+                      ? "bg-primary text-primary-foreground"
+                      : "hover:bg-muted text-muted-foreground"
+                  )}
+                >
+                  {pageNum}
+                </button>
+              ) : (
+                <span
+                  key={i}
+                  className="flex size-8 items-center justify-center text-sm text-muted-foreground"
+                >
+                  {pageNum}
+                </span>
+              )
+            )}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => onPageChange?.(page + 1)}
+          >
+            Next
+          </Button>
         </div>
-        <Button variant="outline" size="sm">
-          Next
-        </Button>
-      </div>
+      )}
     </div>
   )
 }
